@@ -1,0 +1,140 @@
+require 'tempfile'
+require 'reaper'
+require 'fission-repository-generator'
+
+module Fission
+  module RepositoryGenerator
+    class Generator < Fission::Callback
+
+      include Fission::Utils::Constants
+
+      attr_reader :object_store
+
+      def setup(*args)
+        @object_store = Fission::Assets::Store.new
+      end
+
+      def valid?(message)
+        super do |payload|
+          retrieve(payload, :data, :package_builder, :categorized) ||
+            retrieve(payload, :data, :package_builder, :package_list)
+        end
+      end
+
+      def execute(message)
+        failure_wrap(message) do |payload|
+          init_payload(payload)
+          config_path = fetch_repository_configuration(payload)
+          list = Reaper::PackageList.new(config_path, {
+              :package_root => 'builder',
+              :package_bucket => 'storage'
+            }.to_rash
+          )
+          [retrieve(payload, :data, :package_builder, :categorized),
+            retrieve(payload, :data, :package_builder, :package_list)].compact.each do |pkgs|
+            pkgs.each do |origin, codenames|
+              codenames.each do |codename, packages|
+                packages.each do |pkg|
+                  list.options.merge!(
+                    :origin => origin,
+                    :codename => codename,
+                    :component => !!PRERELEASE.detect{|string| pkg.include?(string)} ? 'prerelease' : 'stable'
+                  )
+                  package = object_store.get(pkg)
+                  package.close
+                  new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
+                  FileUtils.mv(package.path, new_path)
+                  list.add_package(new_path).each do |key_path|
+                    object_store.put(key_path, new_path)
+                  end
+                  File.delete(new_path)
+                end
+              end
+            end
+          end
+          list.write!
+          store_repository(payload, config_path)
+          store_repository_configuration(payload, config_path)
+          job_completed(:repository_generator, payload, message)
+        end
+      end
+
+      def store_repository(payload, config_file)
+        repo_config = MultiJson.load(File.read(config_file))
+        repo_config.keys.each do |pkg_system|
+          generator = Reaper::Generator.new({
+              :package_system => pkg_system,
+              :package_config => repo_config,
+              :output_directory => File.join(repository_output_directory(payload), pkg_system),
+              :signer => nil
+            }.to_rash
+          ).generate!
+          packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
+          repo_key = File.join(
+            'repository-generator/repositories',
+            retrieve(payload, :account, :name).to_s,
+            pkg_system,
+            [Time.now.to_i.to_s, File.basename(packed)].join('-')
+          )
+          object_store.put(repo_key, packed)
+          File.delete(packed)
+          payload[:data][:repository_generator][:repositories][pkg_system] = repo_key
+        end
+      end
+
+      def repository_output_directory(payload)
+        path = File.join(
+          Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp',
+          'generated-repositories',
+          retrieve(payload, :data, :account, :name)
+        )
+        FileUtils.mkdir_p(File.dirname(path))
+        path
+      end
+
+      def store_repository_configuration(payload, config_path)
+        object_key = repository_json_key(payload)
+        object_store.put(object_key, config_path)
+        File.delete(config_path)
+        payload[:data][:repository_generator][:repository_config] = object_key
+        true
+      end
+
+      def init_payload(payload)
+        payload[:data][:repository_generator] ||= {}
+        payload[:data][:repository_generator].merge!(
+          :repositories => {}
+        )
+      end
+
+      def fetch_repository_configuration(payload)
+        begin
+          json = object_store.get(repository_json_key(payload))
+        rescue => e
+          warn "Failed to locate existing repository JSON file: #{e.class}: #{e}"
+        end
+        if(json)
+          json.close
+          json.path
+        else
+          tmp_file = Tempfile.new('repository')
+          tmp_file.close
+          path = tmp_file.path
+          tmp_file.delete
+          path
+        end
+      end
+
+      def repository_json_key(payload)
+        File.join(
+          'repository-generator',
+          retrieve(payload, :data, :account, :name),
+          'repository.json'
+        )
+      end
+
+    end
+  end
+end
+
+Fission.register(:repository_generator, :generator, Fission::RepositoryGenerator::Generator)
