@@ -26,8 +26,8 @@ module Fission
           init_payload(payload)
           config_path = fetch_repository_configuration(payload)
           list = Reaper::PackageList.new(config_path, {
-              :package_root => 'builder',
-              :package_bucket => 'storage'
+              :package_root => 'packages',
+              :package_bucket => retrieve(payload, :data, :account, :name)
             }.to_rash
           )
           [retrieve(payload, :data, :package_builder, :categorized),
@@ -45,6 +45,7 @@ module Fission
                   new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
                   FileUtils.mv(package.path, new_path)
                   list.add_package(new_path).each do |key_path|
+                    key_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :key_prefix), key_path)
                     object_store.put(key_path, new_path)
                   end
                   File.delete(new_path)
@@ -72,7 +73,7 @@ module Fission
           packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
           repo_key = File.join(
             'repository-generator/repositories',
-            retrieve(payload, :account, :name).to_s,
+            retrieve(payload, :data, :account, :name).to_s,
             pkg_system,
             [Time.now.to_i.to_s, File.basename(packed)].join('-')
           )
