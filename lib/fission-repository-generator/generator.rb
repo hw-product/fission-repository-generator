@@ -17,8 +17,10 @@ module Fission
           if(Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :domain))
             creds = creds.merge(:path_style => true)
             creds.delete(:region)
+            @pkg_key_prefix = nil
+          else
+            @pkg_key_prefix = default_key_prefix
           end
-          @pkg_key_prefix = ''
           @pkg_store = Fission::Assets::Store.new(creds.merge(:bucket => :none))
         else
           @pkg_key_prefix = default_key_prefix
@@ -57,7 +59,7 @@ module Fission
                   new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
                   FileUtils.mv(package.path, new_path)
                   list.add_package(new_path).each do |key_path|
-                    key_path = File.join(pkg_key_prefix, key_path)
+                    key_path = File.join(*[compute_pkg_prefix(payload), key_path].compact)
                     pkg_store.put(key_path, new_path)
                   end
                   File.delete(new_path)
@@ -84,7 +86,7 @@ module Fission
           ).generate!
           packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
           repo_key = File.join(
-            default_key_prefix
+            default_key_prefix,
             'repositories',
             retrieve(payload, :data, :account, :name).to_s,
             pkg_system,
@@ -145,6 +147,16 @@ module Fission
           retrieve(payload, :data, :account, :name),
           'repository.json'
         )
+      end
+
+      def compute_pkg_prefix(payload)
+        unless(pkg_key_prefix)
+          pkg_store.bucket = [retrieve(payload, :data, :account, :name),
+            Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :domain)].join('.')
+          nil
+        else
+          pkg_key_prefix
+        end
       end
 
     end
