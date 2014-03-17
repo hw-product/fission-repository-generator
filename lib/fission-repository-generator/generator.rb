@@ -8,10 +8,22 @@ module Fission
 
       include Fission::Utils::Constants
 
-      attr_reader :object_store
+      attr_reader :object_store, :pkg_store, :default_key_prefix, :pkg_key_prefix
 
       def setup(*args)
         @object_store = Fission::Assets::Store.new
+        @default_key_prefix = Carnivore::Config.get(:fission, :repository_generator, :key_prefix) || 'repository-generator'
+        if(creds = Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :credentials))
+          if(Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :domain))
+            creds = creds.merge(:path_style => true)
+            creds.delete(:region)
+          end
+          @pkg_key_prefix = ''
+          @pkg_store = Fission::Assets::Store.new(creds.merge(:bucket => :none))
+        else
+          @pkg_key_prefix = default_key_prefix
+          @pkg_store = object_store
+        end
       end
 
       def valid?(message)
@@ -45,8 +57,8 @@ module Fission
                   new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
                   FileUtils.mv(package.path, new_path)
                   list.add_package(new_path).each do |key_path|
-                    key_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :key_prefix), key_path)
-                    object_store.put(key_path, new_path)
+                    key_path = File.join(pkg_key_prefix, key_path)
+                    pkg_store.put(key_path, new_path)
                   end
                   File.delete(new_path)
                 end
@@ -72,7 +84,8 @@ module Fission
           ).generate!
           packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
           repo_key = File.join(
-            'repository-generator/repositories',
+            default_key_prefix
+            'repositories',
             retrieve(payload, :data, :account, :name).to_s,
             pkg_system,
             [Time.now.to_i.to_s, File.basename(packed)].join('-')
@@ -128,7 +141,7 @@ module Fission
 
       def repository_json_key(payload)
         File.join(
-          'repository-generator',
+          default_key_prefix,
           retrieve(payload, :data, :account, :name),
           'repository.json'
         )
