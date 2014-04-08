@@ -60,7 +60,7 @@ module Fission
                   FileUtils.mv(package.path, new_path)
                   list.add_package(new_path).each do |key_path|
                     key_path = File.join(*[compute_pkg_prefix(payload), key_path].compact)
-                    pkg_store.put(key_path, new_path)
+                    pkg_store.put(File.join('repository', key_path), new_path)
                   end
                   File.delete(new_path)
                 end
