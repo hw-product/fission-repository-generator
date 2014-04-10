@@ -58,6 +58,10 @@ module Fission
                   package.close
                   new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
                   FileUtils.mv(package.path, new_path)
+                  Reaper::Signer.new(
+                    :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
+                    :package_system => File.extname(new_path).sub('.', '')
+                  ).sign(new_path)
                   list.add_package(new_path).each do |key_path|
                     key_path = File.join(*[compute_pkg_prefix(payload), key_path].compact)
                     pkg_store.put(File.join('repository', key_path), new_path)
@@ -81,7 +85,10 @@ module Fission
               :package_system => pkg_system,
               :package_config => repo_config,
               :output_directory => File.join(repository_output_directory(payload), pkg_system),
-              :signer => nil
+              :signer => Reaper::Signer.new(
+                :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
+                :package_system => pkg_system
+              )
             }.to_rash
           ).generate!
           packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
