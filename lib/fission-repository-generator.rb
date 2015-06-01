@@ -1,3 +1,4 @@
 require 'fission'
-require 'fission-repository-generator/version'
-require 'fission-repository-generator/generator'
+require 'fission-repositories/generator'
+require 'fission-repositories/publisher'
+require 'fission-repositories/version'

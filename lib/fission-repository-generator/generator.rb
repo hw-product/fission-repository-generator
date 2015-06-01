@@ -8,162 +8,195 @@ module Fission
 
       include Fission::Utils::Constants
 
-      attr_reader :object_store, :pkg_store, :default_key_prefix, :pkg_key_prefix
-
-      def setup(*args)
-        @object_store = Fission::Assets::Store.new
-        @default_key_prefix = Carnivore::Config.get(:fission, :repository_generator, :key_prefix) || 'repository-generator'
-        if(creds = Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :credentials))
-          if(Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :domain))
-            creds = creds.merge(:path_style => true)
-            creds.delete(:region)
-            @pkg_key_prefix = nil
-          else
-            @pkg_key_prefix = default_key_prefix
-          end
-          @pkg_store = Fission::Assets::Store.new(creds.merge(:bucket => :none))
-        else
-          @pkg_key_prefix = default_key_prefix
-          @pkg_store = object_store
-        end
-      end
-
+      # Message validity
+      #
+      # @param message [Carnivore::Message]
+      # @return [Truthy, Falsey]
       def valid?(message)
         super do |payload|
-          retrieve(payload, :data, :package_builder, :categorized) ||
-            retrieve(payload, :data, :package_builder, :package_list)
+          payload.get(:data, :repository_generator, :add) ||
+            payload.get(:data, :repository_generator, :remove)
         end
       end
 
+      # @return [Fission::Assets::Store]
+      def repository_store
+        # if not using direct asset store, use custom bucket
+        asset_store
+      end
+
+      # Generate and store repository
+      #
+      # @param message [Carnivore::Message]
       def execute(message)
         failure_wrap(message) do |payload|
-          init_payload(payload)
-          config_path = fetch_repository_configuration(payload)
-          list = Reaper::PackageList.new(config_path, {
-              :package_root => 'packages',
-              :package_bucket => retrieve(payload, :data, :account, :name)
-            }.to_rash
+          payload.set(:data, :repository_generator, :modifications,
+            Smash.new(:added => [], :removed => [])
           )
-          [retrieve(payload, :data, :package_builder, :categorized),
-            retrieve(payload, :data, :package_builder, :package_list)].compact.each do |pkgs|
+          list = Reaper::PackageList.new(repository_config(payload), Smash.new)
+
+          payload.fetch(:data, :repository_generator, :add, Smash.new).each do |pkgs|
             pkgs.each do |origin, codenames|
               codenames.each do |codename, packages|
                 packages.each do |pkg|
                   list.options.merge!(
                     :origin => origin,
                     :codename => codename,
-                    :component => !!PRERELEASE.detect{|string| pkg.include?(string)} ? 'prerelease' : 'stable'
+                    :component => prerelease?(pkg) ? 'unstable' : 'stable'
                   )
-                  package = object_store.get(pkg)
-                  package.close
-                  new_path = File.join(Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp', File.basename(pkg))
-                  FileUtils.mv(package.path, new_path)
-                  Reaper::Signer.new(
-                    :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
-                    :package_system => File.extname(new_path).sub('.', '')
-                  ).sign(new_path)
-                  list.add_package(new_path).each do |key_path|
-                    key_path = File.join(*[compute_pkg_prefix(payload), key_path].compact)
-                    pkg_store.put(File.join('repository', key_path), new_path)
+                  package = asset_store.get(pkg)
+                  pkg_path = File.join(working_directory(payload), File.basename(pkg))
+                  FileUtils.mv(package.path, pkg_path)
+                  # TODO:::
+                  # Need to add config option with key name which we
+                  # will fetch from asset store. This will allow users
+                  # to provide keys via web ui, then reference them
+                  # in custom config and we can get proper dynamic
+                  # access from here.
+                  # Reaper::Signer.new(
+                  #   :signing_key => config[:signing_key],
+                  #   :package_system => File.extname(pkg_path).sub('.', '')
+                  # ).sign(pkg_path)
+                  list.add_package(pkg_path).each do |key_path|
+                    key_path = key_for(payload, key_path)
+                    repository_store.put(key_path, pkg_path)
                   end
-                  File.delete(new_path)
+                  package.close
+                  File.delete(pkg_path)
                 end
               end
             end
           end
           list.write!
-          store_repository(payload, config_path)
-          store_repository_configuration(payload, config_path)
+          store_repository(payload, list.path)
+          store_configuration(payload, list.path)
+          FileUtils.rm_rf(working_directory(payload))
           job_completed(:repository_generator, payload, message)
         end
       end
 
-      def store_repository(payload, config_file)
-        repo_config = MultiJson.load(File.read(config_file))
-        repo_config.keys.each do |pkg_system|
-          generator = Reaper::Generator.new({
-              :package_system => pkg_system,
-              :package_config => repo_config,
-              :output_directory => File.join(repository_output_directory(payload), pkg_system),
-              :signer => Reaper::Signer.new(
-                :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
-                :package_system => pkg_system
-              )
-            }.to_rash
-          ).generate!
-          packed = Fission::Assets::Packer.pack(repository_output_directory(payload))
-          repo_key = File.join(
-            default_key_prefix,
+      # Generate key based on custom or default store
+      #
+      # @param payload [Smash]
+      # @param args [String]
+      # @return [String] generated key
+      def key_for(payload, *args)
+        if(repository_store == asset_store)
+          File.join(
             'repositories',
-            retrieve(payload, :data, :account, :name).to_s,
-            pkg_system,
-            [Time.now.to_i.to_s, File.basename(packed)].join('-')
+            payload.fetch(:data, :account, :name, 'default'),
+            *args
           )
-          object_store.put(repo_key, packed)
-          File.delete(packed)
-          payload[:data][:repository_generator][:repositories][pkg_system] = repo_key
+        else
+          File.join(*args)
         end
       end
 
-      def repository_output_directory(payload)
+      # Store the generated repository into the remote asset store
+      #
+      # @param payload [Smash]
+      # @param config_file [String] path to packages config file
+      # @return [TrueClass]
+      def store_repository(payload, config_file)
+        repo_config = MultiJson.load(File.read(config_file)).to_smash
+        repo_config.keys.each do |pkg_system|
+          generator = Reaper::Generator.new(
+            Smash.new(
+              :package_system => pkg_system,
+              :package_config => repo_config,
+              :output_directory => File.join(output_directory(payload), pkg_system)
+              # :signer => Reaper::Signer.new(
+              #   :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
+              #   :package_system => pkg_system
+              # )
+            )
+          ).generate!
+          packed = asset_store.pack(output_directory(payload))
+          repo_key = File.join(
+            'repositories',
+            payload.fetch(:data, :account, :name, 'default'),
+            pkg_system,
+            [Time.now.to_i.to_s, File.basename(packed)].join('-')
+          )
+          asset_store.put(repo_key, packed)
+          File.delete(packed)
+          payload.set(:data, :repository_generator, :generated, pkg_system, repo_key)
+        end
+        true
+      end
+
+      # Generate the repository config file key to be used in
+      # asset store
+      #
+      # @param payload [Smash]
+      # @return [String]
+      def json_key(payload)
+        File.join(
+          'repositories',
+          payload.fetch(:data, :account, :name, 'default'),
+          'repository.json'
+        )
+      end
+
+      # Create output directory for repository generation
+      #
+      # @param payload [Smash]
+      # @return [String] path
+      def output_directory(payload)
         path = File.join(
-          Carnivore::Config.get(:fission, :repository_generator, :working_directory) || '/tmp',
+          working_directory(payload),
           'generated-repositories',
-          retrieve(payload, :data, :account, :name)
+          Celluloid.uuid
         )
         FileUtils.mkdir_p(File.dirname(path))
         path
       end
 
-      def store_repository_configuration(payload, config_path)
-        object_key = repository_json_key(payload)
-        object_store.put(object_key, config_path)
+      # Generate temporary working directory
+      #
+      # @param payload [Smash]
+      # @return [String] path
+      def working_directory(payload)
+        path = File.join(
+          config.fetch(:working_directory, '/tmp/fission-repositories'),
+          payload[:message_id]
+        )
+        FileUtils.mkdir_p(path)
+        path
+      end
+
+      # Store repository configuration information to asset store
+      #
+      # @param payload [Smash]
+      # @param config_path [String] path to config file
+      # @return [TrueClass]
+      def store_configuration(payload, config_path)
+        object_key = json_key(payload)
+        asset_store.put(object_key, config_path)
         File.delete(config_path)
-        payload[:data][:repository_generator][:repository_config] = object_key
+        payload.set(:data, :repository_generator, :config, object_key)
         true
       end
 
-      def init_payload(payload)
-        payload[:data][:repository_generator] ||= {}
-        payload[:data][:repository_generator].merge!(
-          :repositories => {}
-        )
-      end
-
-      def fetch_repository_configuration(payload)
+      # Fetch repository configuration file from asset store
+      #
+      # @param payload [Smash]
+      # @return [String] path
+      def fetch_configuration(payload)
         begin
-          json = object_store.get(repository_json_key(payload))
+          json = asset_store.get(json_key(payload))
         rescue => e
           warn "Failed to locate existing repository JSON file: #{e.class}: #{e}"
         end
-        if(json)
-          json.close
-          json.path
-        else
-          tmp_file = Tempfile.new('repository')
-          tmp_file.close
-          path = tmp_file.path
-          tmp_file.delete
-          path
-        end
-      end
-
-      def repository_json_key(payload)
-        File.join(
-          default_key_prefix,
-          retrieve(payload, :data, :account, :name),
+        path = File.join(
+          working_directory(payload),
           'repository.json'
         )
-      end
 
-      def compute_pkg_prefix(payload)
-        unless(pkg_key_prefix)
-          pkg_store.bucket = [retrieve(payload, :data, :account, :name),
-            Carnivore::Config.get(:fission, :repository_generator, :package_assets, :assets_store, :domain)].join('.')
-          nil
-        else
-          pkg_key_prefix
+        if(json)
+          FileUtils.mv(json.path, path)
         end
+        path
       end
 
     end
