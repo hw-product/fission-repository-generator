@@ -19,12 +19,6 @@ module Fission
         end
       end
 
-      # @return [Fission::Assets::Store]
-      def repository_store
-        # if not using direct asset store, use custom bucket
-        asset_store
-      end
-
       # Generate and store repository
       #
       # @param message [Carnivore::Message]
@@ -38,6 +32,8 @@ module Fission
           payload.fetch(:data, :repository_generator, :add, Smash.new).each do |pkgs|
             pkgs.each do |origin, codenames|
               codenames.each do |codename, packages|
+                packages_directory = File.join(working_directory(payload), 'packages', origin)
+                FileUtils.mkdir_p(packages_directory)
                 packages.each do |pkg|
                   list.options.merge!(
                     :origin => origin,
@@ -45,7 +41,7 @@ module Fission
                     :component => prerelease?(pkg) ? 'unstable' : 'stable'
                   )
                   package = asset_store.get(pkg)
-                  pkg_path = File.join(working_directory(payload), File.basename(pkg))
+                  pkg_path = File.join(packages_directory, File.basename(pkg))
                   FileUtils.mv(package.path, pkg_path)
                   # TODO:::
                   # Need to add config option with key name which we
@@ -58,8 +54,8 @@ module Fission
                   #   :package_system => File.extname(pkg_path).sub('.', '')
                   # ).sign(pkg_path)
                   list.add_package(pkg_path).each do |key_path|
-                    key_path = key_for(payload, key_path)
-                    repository_store.put(key_path, pkg_path)
+                    payload.set(:data, :repository_generator, :package_assets,
+                      File.join('packages', origin, File.basename(pkg)), pkg)
                   end
                   package.close
                   File.delete(pkg_path)
@@ -72,23 +68,6 @@ module Fission
           store_configuration(payload, list.path)
           FileUtils.rm_rf(working_directory(payload))
           job_completed(:repository_generator, payload, message)
-        end
-      end
-
-      # Generate key based on custom or default store
-      #
-      # @param payload [Smash]
-      # @param args [String]
-      # @return [String] generated key
-      def key_for(payload, *args)
-        if(repository_store == asset_store)
-          File.join(
-            'repositories',
-            payload.fetch(:data, :account, :name, 'default'),
-            *args
-          )
-        else
-          File.join(*args)
         end
       end
 
