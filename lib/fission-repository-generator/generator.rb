@@ -1,5 +1,5 @@
 require 'tempfile'
-require 'reaper'
+require 'reaper-man'
 require 'fission-repository-generator'
 
 module Fission
@@ -27,7 +27,7 @@ module Fission
           payload.set(:data, :repository_generator, :modifications,
             Smash.new(:added => [], :removed => [])
           )
-          list = Reaper::PackageList.new(repository_config(payload), Smash.new)
+          list = ReaperMan::PackageList.new(fetch_configuration(payload), Smash.new)
 
           payload.fetch(:data, :repository_generator, :add, Smash.new).each do |pkgs|
             pkgs.each do |origin, codenames|
@@ -49,7 +49,7 @@ module Fission
                   # to provide keys via web ui, then reference them
                   # in custom config and we can get proper dynamic
                   # access from here.
-                  # Reaper::Signer.new(
+                  # ReaperMan::Signer.new(
                   #   :signing_key => config[:signing_key],
                   #   :package_system => File.extname(pkg_path).sub('.', '')
                   # ).sign(pkg_path)
@@ -79,12 +79,12 @@ module Fission
       def store_repository(payload, config_file)
         repo_config = MultiJson.load(File.read(config_file)).to_smash
         repo_config.keys.each do |pkg_system|
-          generator = Reaper::Generator.new(
+          generator = ReaperMan::Generator.new(
             Smash.new(
               :package_system => pkg_system,
               :package_config => repo_config,
               :output_directory => File.join(output_directory(payload), pkg_system)
-              # :signer => Reaper::Signer.new(
+              # :signer => ReaperMan::Signer.new(
               #   :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
               #   :package_system => pkg_system
               # )
@@ -171,9 +171,10 @@ module Fission
           working_directory(payload),
           'repository.json'
         )
-
         if(json)
           FileUtils.mv(json.path, path)
+        else
+          File.write('{}', path)
         end
         path
       end
