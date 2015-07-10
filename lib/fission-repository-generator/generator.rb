@@ -151,7 +151,7 @@ module Fission
       # @return [TrueClass]
       def store_configuration(payload, config_path)
         object_key = json_key(payload)
-        asset_store.put(object_key, config_path)
+        asset_store.put(object_key, File.open(config_path, 'r'))
         File.delete(config_path)
         payload.set(:data, :repository_generator, :config, object_key)
         true
