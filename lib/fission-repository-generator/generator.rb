@@ -35,6 +35,7 @@ module Fission
                 packages_directory = File.join(working_directory(payload), 'packages', origin)
                 FileUtils.mkdir_p(packages_directory)
                 packages.each do |pkg|
+                  debug "Processing file - Origin: #{origin} Codename: #{codename} Package: #{pkg}"
                   list.options.merge!(
                     :origin => origin,
                     :codename => codename,
@@ -90,6 +91,7 @@ module Fission
               # )
             )
           ).generate!
+          debug "Generated repository directory: #{Dir.glob(File.join(output_directory(payload), '**', '**', '*')).map(&:to_s)}"
           packed = asset_store.pack(output_directory(payload))
           repo_key = File.join(
             'repositories',
@@ -124,23 +126,9 @@ module Fission
       def output_directory(payload)
         path = File.join(
           working_directory(payload),
-          'generated-repositories',
-          Celluloid.uuid
+          'generated-repositories'
         )
         FileUtils.mkdir_p(File.dirname(path))
-        path
-      end
-
-      # Generate temporary working directory
-      #
-      # @param payload [Smash]
-      # @return [String] path
-      def working_directory(payload)
-        path = File.join(
-          config.fetch(:working_directory, '/tmp/fission-repositories'),
-          payload[:message_id]
-        )
-        FileUtils.mkdir_p(path)
         path
       end
 
