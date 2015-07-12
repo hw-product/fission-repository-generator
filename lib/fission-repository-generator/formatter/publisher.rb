@@ -19,6 +19,11 @@ module Fission
               payload.get(:data, :repository_generator, :generated)
             )
           end
+          if(payload.get(:data, :repository_generator, :package_assets))
+            payload.set(:data, :repository_publisher, :package_assets,
+              payload.get(:data, :repository_generator, :package_assets)
+            )
+          end
         end
 
       end
