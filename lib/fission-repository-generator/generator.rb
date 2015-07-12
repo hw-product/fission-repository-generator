@@ -24,9 +24,6 @@ module Fission
       # @param message [Carnivore::Message]
       def execute(message)
         failure_wrap(message) do |payload|
-          payload.set(:data, :repository_generator, :modifications,
-            Smash.new(:added => [], :removed => [])
-          )
           list = ReaperMan::PackageList.new(fetch_configuration(payload), Smash.new)
 
           payload.fetch(:data, :repository_generator, :add, Smash.new).each do |pkgs|
