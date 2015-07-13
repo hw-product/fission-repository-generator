@@ -52,8 +52,7 @@ module Fission
                   #   :package_system => File.extname(pkg_path).sub('.', '')
                   # ).sign(pkg_path)
                   list.add_package(pkg_path).each do |key_path|
-                    payload.set(:data, :repository_generator, :package_assets,
-                      File.join('packages', origin, File.basename(pkg)), pkg)
+                    payload.set(:data, :repository_generator, :package_assets, key_path, pkg)
                   end
                   package.close
                   File.delete(pkg_path)
