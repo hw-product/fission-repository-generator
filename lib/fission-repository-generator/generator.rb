@@ -158,7 +158,7 @@ module Fission
         if(json)
           FileUtils.mv(json.path, path)
         else
-          File.write('{}', path)
+          File.write(path, '{}')
         end
         path
       end
