@@ -33,6 +33,7 @@ module Fission
                 FileUtils.mkdir_p(packages_directory)
                 packages.each do |pkg|
                   debug "Processing file - Origin: #{origin} Codename: #{codename} Package: #{pkg}"
+                  event!(:info, :info => "Processing file - Origin: #{origin} Codename: #{codename} Package: #{pkg}")
                   list.options.merge!(
                     :origin => origin,
                     :codename => codename,
@@ -46,6 +47,7 @@ module Fission
                       :signing_key => config[:signing_key],
                       :package_system => File.extname(pkg_path).sub('.', '')
                     ).sign(pkg_path)
+                    event!(:info, :info => "Signed package: #{pkg}")
                   end
                   list.add_package(pkg_path).each do |key_path|
                     payload.set(:data, :repository_generator, :package_assets, key_path, pkg)
@@ -70,6 +72,7 @@ module Fission
       # @param config_file [String] path to packages config file
       # @return [TrueClass]
       def store_repository(payload, config_file)
+        event!(:info, :info => 'Storing repository files to asset store')
         repo_config = MultiJson.load(File.read(config_file)).to_smash
         repo_config.keys.each do |pkg_system|
           generator = ReaperMan::Generator.new(
@@ -83,7 +86,6 @@ module Fission
               ) : nil
             )
           ).generate!
-          debug "Generated repository directory: #{Dir.glob(File.join(output_directory(payload), '**', '**', '*')).map(&:to_s)}"
           packed = asset_store.pack(output_directory(payload))
           repo_key = File.join(
             'repositories',
@@ -95,6 +97,7 @@ module Fission
           File.delete(packed)
           payload.set(:data, :repository_generator, :generated, pkg_system, repo_key)
         end
+        event!(:info, :info => 'Storing of repository assets complete')
         true
       end
 
