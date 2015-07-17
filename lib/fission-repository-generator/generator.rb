@@ -41,16 +41,12 @@ module Fission
                   package = asset_store.get(pkg)
                   pkg_path = File.join(packages_directory, File.basename(pkg))
                   FileUtils.mv(package.path, pkg_path)
-                  # TODO:::
-                  # Need to add config option with key name which we
-                  # will fetch from asset store. This will allow users
-                  # to provide keys via web ui, then reference them
-                  # in custom config and we can get proper dynamic
-                  # access from here.
-                  # ReaperMan::Signer.new(
-                  #   :signing_key => config[:signing_key],
-                  #   :package_system => File.extname(pkg_path).sub('.', '')
-                  # ).sign(pkg_path)
+                  if(config[:signing_key])
+                    ReaperMan::Signer.new(
+                      :signing_key => config[:signing_key],
+                      :package_system => File.extname(pkg_path).sub('.', '')
+                    ).sign(pkg_path)
+                  end
                   list.add_package(pkg_path).each do |key_path|
                     payload.set(:data, :repository_generator, :package_assets, key_path, pkg)
                   end
@@ -80,11 +76,11 @@ module Fission
             Smash.new(
               :package_system => pkg_system,
               :package_config => repo_config,
-              :output_directory => File.join(output_directory(payload), pkg_system)
-              # :signer => ReaperMan::Signer.new(
-              #   :signing_key => Carnivore::Config.get(:fission, :repository_generator, :signing_key, :default),
-              #   :package_system => pkg_system
-              # )
+              :output_directory => File.join(output_directory(payload), pkg_system),
+              :signer => config[:signing_key] ? ReaperMan::Signer.new(
+                :signing_key => config[:signing_key],
+                :package_system => pkg_system
+              ) : nil
             )
           ).generate!
           debug "Generated repository directory: #{Dir.glob(File.join(output_directory(payload), '**', '**', '*')).map(&:to_s)}"
