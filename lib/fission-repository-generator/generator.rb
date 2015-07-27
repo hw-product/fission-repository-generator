@@ -1,5 +1,4 @@
 require 'tempfile'
-require 'reaper-man'
 require 'fission-repository-generator'
 
 module Fission
@@ -7,6 +6,25 @@ module Fission
     class Generator < Fission::Callback
 
       include Fission::Utils::Constants
+
+      # If running within java, extract helper utility script from jar
+      # ball and write to local system to allow shellout to work as expected.
+      def setup(*_)
+        require 'reaper-man'
+        location = ReaperMan::Signer::HELPER_COMMAND
+        if(location.include?('jar!'))
+          tmp_file = Tempfile.new('reaper-man')
+          new_location = File.join(Dir.home, File.basename(tmp_file.path))
+          tmp_file.delete
+          File.open(new_location, 'w') do |file|
+            file.puts File.read(location)
+          end
+          File.chmod(0755, new_location)
+          ReaperMan::Signer.send(:remove_const, :HELPER_COMMAND)
+          ReaperMan::Signer.const_set(:HELPER_COMMAND, new_location)
+          warn "Updated ReaperMan utility script location: #{new_location}"
+        end
+      end
 
       # Message validity
       #
