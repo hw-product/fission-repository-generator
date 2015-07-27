@@ -46,7 +46,7 @@ module Fission
                     ReaperMan::Signer.new(
                       :signing_key => config[:signing_key],
                       :package_system => File.extname(pkg_path).sub('.', '')
-                    ).sign(pkg_path)
+                    ).package(pkg_path)
                     event!(:info, :info => "Signed package: #{pkg}")
                   end
                   list.add_package(pkg_path).each do |key_path|
