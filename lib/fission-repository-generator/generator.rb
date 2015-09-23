@@ -80,6 +80,7 @@ module Fission
           store_repository(payload, list.path)
           store_configuration(payload, list.path)
           FileUtils.rm_rf(working_directory(payload))
+          payload.set(:data, :repository_generator, :public, config[:public])
           job_completed(:repository_generator, payload, message)
         end
       end
@@ -128,7 +129,7 @@ module Fission
         File.join(
           'repositories',
           payload.fetch(:data, :account, :name, 'default'),
-          'repository.json'
+          config[:public] ? 'repository-public.json' : 'repository.json'
         )
       end
 

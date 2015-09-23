@@ -24,6 +24,7 @@ module Fission
               payload.get(:data, :repository_generator, :package_assets)
             )
           end
+          payload.set(:data, :repository_publisher, :public, config[:public])
         end
 
       end
